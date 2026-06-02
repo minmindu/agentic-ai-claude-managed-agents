@@ -1,0 +1,27 @@
+# Environment variables — never commit real keys
+.env
+.env.local
+.env.*.local
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# path folder and all subfolders
+path/
+
+# macOS
+.DS_Store
+
+# output report
+*report.html

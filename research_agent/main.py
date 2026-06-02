@@ -1,0 +1,102 @@
+"""
+main.py
+-------
+Entrypoint for the research agent pipeline.
+
+Usage:
+  python main.py
+
+Or import from another script:
+  from main import run_workflow
+  result = run_workflow("AI ethics in healthcare")
+
+Production tip — skip re-creation by passing existing IDs:
+  run_workflow("AI ethics in healthcare",
+               agent_id="agt_01...",
+               environment_id="env_01...")
+"""
+
+import anthropic
+
+from config.settings import SETTINGS
+from agents.research_agent import AGENT_CONFIG, TOOL_MAPPING, create_research_agent
+from agents.setup import create_environment
+from workflows.report import generate_research_report_with_tools
+from workflows.reflection import reflection_and_rewrite
+from workflows.html_export import convert_report_to_html
+
+
+def run_workflow(
+    topic: str,
+    output_html: str | None = None,
+    agent_id: str | None = None,
+    environment_id: str | None = None,
+) -> dict:
+    """
+    Run the full research pipeline end-to-end.
+
+    Args:
+        topic:          The research question or topic.
+        output_html:    Path to write the HTML report (defaults to settings).
+        agent_id:       Existing agent ID to reuse (skips creation if provided).
+        environment_id: Existing environment ID to reuse (skips creation if provided).
+
+    Returns:
+        Dict with keys: report, reflection, revised, html.
+    """
+    output_html = output_html or AGENT_CONFIG["default_output_html"]
+
+    print(f"\n{'='*60}")
+    print(f"Research topic: {topic}")
+    print(f"{'='*60}\n")
+
+    client = anthropic.Anthropic(api_key=SETTINGS["api_key"])
+
+    # ── Setup (skip if IDs supplied) ───────────────────────────────────────
+    if not agent_id or not environment_id:
+        print("--- Setup: Creating agent and environment ---")
+        print("    (Pass agent_id and environment_id to skip this step)\n")
+
+    if not agent_id:
+        agent_id = create_research_agent(client)
+
+    if not environment_id:
+        environment_id = create_environment(client)
+
+    # ── Step 1: Generate report with Managed Agent ─────────────────────────
+    report = generate_research_report_with_tools(
+        client=client,
+        prompt=topic,
+        agent_id=agent_id,
+        environment_id=environment_id,
+        tool_mapping=TOOL_MAPPING,
+    )
+
+    # ── Step 2: Reflect and rewrite ────────────────────────────────────────
+    result = reflection_and_rewrite(client=client, report=report)
+    print("Reflection:\n", result["reflection"])
+
+    # ── Step 3: Convert to HTML ────────────────────────────────────────────
+    html = convert_report_to_html(client=client, report=result["revised_report"])
+
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"\n✅ HTML report saved to: {output_html}")
+
+    return {
+        "report":     report,
+        "reflection": result["reflection"],
+        "revised":    result["revised_report"],
+        "html":       html,
+    }
+
+# ──────────────────────────────────────────
+# Main function
+# ──────────────────────────────────────────
+
+if __name__ == "__main__":
+    result = run_workflow("Radio observations of recurrent novae")
+    print("\n" + "="*60)
+    print("Revised report preview (first 500 chars):")
+    print("="*60)
+    print(result["revised"][:500])
