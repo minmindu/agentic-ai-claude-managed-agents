@@ -3,3 +3,5 @@ python-dotenv
 arxiv
 tavily-python
 wikipedia
+# --- memory ---
+pymongo>=4.7

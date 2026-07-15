@@ -19,7 +19,10 @@ def generate_research_report_with_tools(
     agent_id: str,
     environment_id: str,
     tool_mapping: dict[str, callable],
-) -> str:
+    db,  # --- memory ---
+    student_id: str,  # --- memory ---
+) -> tuple[str, str]:  # --- memory ---
+
     """
     Run a Managed Agent session to produce a sourced research report.
 
@@ -51,6 +54,8 @@ def generate_research_report_with_tools(
         environment_id=environment_id,
         user_message=prompt,
         tool_mapping=tool_mapping,
+        db=db,  # --- memory ---
+        student_id=student_id,  # --- memory ---
         title=f"Research: {prompt[:60]}",
     )
     print(f"\n   Final report length: {len(result)} chars")
