@@ -23,5 +23,8 @@ path/
 # macOS
 .DS_Store
 
+# VS Code
+.vscode
+
 # output report
 *report.html
