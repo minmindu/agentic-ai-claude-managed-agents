@@ -44,10 +44,13 @@ def ensure_indexes(db: Database) -> None:
     Safe to call repeatedly — create_index is a no-op if an equivalent
     index already exists.
 
-    NOTE: the Atlas Vector/Search index that auto-embeds
-    conversation_summary.summary (Atlas Automated Embedding / autoEmbed)
-    is NOT created here — that's a Search-index resource configured via
-    the Atlas UI or Admin API, not a regular collection index.
+    NOTE: the Atlas Vector Search indexes that power semantic recall
+    (over conversation_summary.summary_embedding and
+    knowledge_base.content_embedding) are NOT created here — those are
+    Search-index resources configured via the Atlas UI or Admin API, not
+    regular collection indexes. Their names live in SETTINGS
+    (vector_index_*). Whichever Voyage model you embed with, its output
+    dimension must match numDimensions in those index definitions.
     """
     conversation = db[SETTINGS["collection_conversation"]]
     conversation.create_index([("session_id", 1), ("seq", 1)])
@@ -60,3 +63,17 @@ def ensure_indexes(db: Database) -> None:
     summary.create_index([("student_id", 1), ("date", -1)])
     summary.create_index("sources_used")
     summary.create_index("topic")
+
+    # --- memory: knowledge_base --- TODO: uncomment
+    # Global (no student_id). Plain indexes back the regex fallback and
+    # tag pre-filtering; the vector index is separate (see note above).
+    # knowledge_base = db[SETTINGS["collection_knowledge_base"]]
+    # knowledge_base.create_index("topic")
+    # knowledge_base.create_index("tags")
+    # knowledge_base.create_index([("created_at", -1)])
+
+    # --- memory: student ---
+    # One doc per student — the unique index enforces that invariant and
+    # makes the exact-key lookup fast.
+    student = db[SETTINGS["collection_student"]]
+    student.create_index("student_id", unique=True)

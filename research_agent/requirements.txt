@@ -5,3 +5,4 @@ tavily-python
 wikipedia
 # --- memory ---
 pymongo>=4.7
+voyageai            # embeddings for the vector-search memory paths

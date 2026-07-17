@@ -4,29 +4,36 @@ agents/session.py
 Manages a Managed Agent session: starting it, streaming events, and
 dispatching custom tool calls back to the executor.
 
-This is the core replacement for the manual `for _ in range(max_turns):`
-agent loop in the original script. The harness handles:
-  - Deciding which tool to call (and when to stop)
-  - Retries and error recovery inside the container
-  - Conversation history and context management
-  - Prompt caching
-
-Your code only needs to handle `agent.custom_tool_use` events and stop on `end_turn`.
-The tool_mapping is supplied by the caller so this module stays agent-agnostic.
-
 --- memory ---
-This version additionally persists every turn to MongoDB via memory.conversation.ConversationRecorder,
-Conversation summarization will be trigger in its workflow level, not in the session leve.
-Everything marked with a "# --- memory ---" comment is new; everything
-else is unchanged from the original.
+This version persists every turn to MongoDB via
+memory.conversation.ConversationRecorder. Conversation summarization is
+triggered at the workflow level, not here.
+
+--- memory: read path (session system override) ---
+Memory context (student profile + relevant past summaries) is injected
+via a per-SESSION system-prompt OVERRIDE, not by prepending to the user
+message. The Managed Agents API lets you override `system` for a single
+session without creating a new agent version. This is the placement the
+memory vendors (e.g. Mem0) use too: retrieved context belongs in the
+system prompt; the user turn should carry only the student's actual
+question.
+
+Two consequences the code accounts for:
+  1. An override REPLACES the agent's system prompt — it doesn't append.
+     So the caller must pass base_system_prompt, and we send
+     base + context. Without a base prompt we simply don't override
+     (the agent's baked-in system stays in effect).
+  2. The recorded user turn stays the student's real words either way,
+     so the raw `conversation` log is never polluted with injected
+     memory.
 """
 
 import anthropic
 import json
 
-# --- memory ---
 from memory.conversation import ConversationRecorder  # --- memory ---
 from pymongo.database import Database  # --- memory ---
+
 
 def run_session(
     client: anthropic.Anthropic,
@@ -37,38 +44,53 @@ def run_session(
     db: Database,  # --- memory ---
     student_id: str,  # --- memory ---
     title: str = "Research session",
-)  -> tuple[str, str]:  # --- memory --- (now also returns session_id)
+    base_system_prompt: str | None = None,   # --- memory: read path ---
+    context_preamble: str | None = None,     # --- memory: read path ---
+) -> tuple[str, str]:
     """
     Start a session, send a user message, stream all events, and return the
     final assistant text once the session goes idle with stop_reason=end_turn.
 
-    Custom tool call flow (per the Managed Agents docs):
-      1. Claude emits `agent.custom_tool_use` → session pauses.
-      2. Session emits `session.status_idle` with stop_reason.type == "requires_action".
-      3. We execute the tool and send back `user.custom_tool_result` for each blocked event.
-      4. Session resumes automatically once all blocking events are resolved.
-
     Args:
-        client:         Authenticated Anthropic client.
-        agent_id:       ID of the pre-created agent.
-        environment_id: ID of the pre-created environment.
-        user_message:   The research prompt to send.
-        tool_mapping:   Name → callable map for this agent's custom tools.
-        db:             MongoDB database handle (memory layer).       # --- memory ---
-        student_id:     The student this session belongs to.          # --- memory ---
-        title:          Human-readable label for the session.
+        base_system_prompt: The agent's base system prompt. Required to use
+            a session system override, because the override REPLACES rather
+            than appends. If None, no override is applied and the agent's
+            own system prompt is used unchanged.
+        context_preamble: Memory context to inject. When provided together
+            with base_system_prompt, the session runs with
+            `base_system_prompt + context_preamble` as its system prompt.
+            The RECORDED user turn never includes it.
 
     Returns:
-        A (report_text, session_id) tuple. report_text is the full agent
-        response text; session_id lets the caller pass through Step 2/3
-        output association if needed later.                          # --- memory ---
+        (report_text, session_id).
     """
+    # --- memory: read path --- build the per-session system override.
+    session_kwargs = {
+        "agent": agent_id,
+        "environment_id": environment_id,
+        "title": title,
+    }
+    if context_preamble and base_system_prompt:
+        override_system = f"{base_system_prompt}\n\n{context_preamble}"
+        # Pass `agent` as an override object carrying the per-session `system`
+        # alongside the id. The `system` (and model / tools / mcp_servers /
+        # skills) override is ONLY valid under type "agent_with_overrides" —
+        # the plain "agent" type accepts just id/type/version, so putting
+        # `system` there is rejected as an unknown field. See the SDK's
+        # BetaManagedAgentsAgentWithOverridesParams.
+        session_kwargs["agent"] = {
+            "type": "agent_with_overrides",
+            "id": agent_id,
+            "system": override_system,
+        }
+    elif context_preamble and not base_system_prompt:
+        # Guard: we have context but no base prompt to compose with.
+        # Overriding would wipe the agent's system prompt, so we skip the
+        # override rather than silently degrade the agent's behavior.
+        print("   [memory] context_preamble supplied without base_system_prompt; "
+              "skipping system override (agent's own system prompt kept).")
 
-    session = client.beta.sessions.create(
-        agent=agent_id,
-        environment_id=environment_id,
-        title=title,
-    )
+    session = client.beta.sessions.create(**session_kwargs)
     print(f"   Session started: {session.id}")
 
     recorder = ConversationRecorder(db=db, session_id=session.id, student_id=student_id)  # --- memory ---
@@ -77,7 +99,9 @@ def run_session(
     events_by_id: dict[str, object] = {}
 
     with client.beta.sessions.events.stream(session.id) as stream:
-        # --- memory ---
+        # --- memory --- record + send the student's real words. Memory
+        # context now lives in the system override, so the user turn is
+        # clean on both the wire and the log.
         recorder.record_user_message(user_message)
 
         client.beta.sessions.events.send(
@@ -100,39 +124,34 @@ def run_session(
                             print(block.text, end="", flush=True)
 
                 case "agent.tool_use":
-                    print(f"\n🛠️  [Built-in tool: {event.name}]")
+                    print(f"\n[Built-in tool: {event.name}]")
 
                 case "agent.custom_tool_use":
                     events_by_id[event.id] = event
-                    # --- memory ---
-                    recorder.record_tool_call(
+                    recorder.record_tool_call(  # --- memory ---
                         tool_name=event.name, tool_input=event.input, event_id=event.id
                     )
-
-                    print(f"\n🛠️  {event.name}({event.input})")
+                    print(f"\n{event.name}({event.input})")
 
                 case "session.status_idle":
                     stop = event.stop_reason
                     if stop and stop.type == "requires_action":
-                        # --- memory ---
-                        group_id = f"{session.id}-batch-{stop.event_ids[0]}"
-                        recorder.tag_batch(list(stop.event_ids), group_id)
+                        group_id = f"{session.id}-batch-{stop.event_ids[0]}"  # --- memory ---
+                        recorder.tag_batch(list(stop.event_ids), group_id)  # --- memory ---
 
                         for event_id in stop.event_ids:
                             tool_event = events_by_id[event_id]
-                            print(f"\n   ↳ executing {tool_event.name}...")
+                            print(f"\n   executing {tool_event.name}...")
                             try:
                                 result = tool_mapping[tool_event.name](**tool_event.input)
-                                # --- memory ---
-                                status = "error" if (
+                                status = "error" if (  # --- memory ---
                                     isinstance(result, list) and result and "error" in result[0]
                                 ) else "success"
                             except Exception as exc:
                                 result = {"error": str(exc)}
                                 status = "error"  # --- memory ---
 
-                            # --- memory ---
-                            recorder.record_tool_result(
+                            recorder.record_tool_result(  # --- memory ---
                                 tool_name=tool_event.name, result=result,
                                 event_id=event_id, group_id=group_id, status=status,
                             )
@@ -151,7 +170,7 @@ def run_session(
                             )
 
                     elif stop and stop.type == "end_turn":
-                        print("\n✅ Final answer received.")
+                        print("\nFinal answer received.")
                         break
 
                 case "session.status_terminated":
@@ -160,7 +179,6 @@ def run_session(
                 case _:
                     print(f"   [DEBUG event]: type={event.type!r} | {event}")
 
-    recorder.record_assistant_message("".join(text_buffer))
+    recorder.record_assistant_message("".join(text_buffer))  # --- memory ---
 
-    result = "".join(text_buffer), session.id
-    return result
+    return "".join(text_buffer), session.id

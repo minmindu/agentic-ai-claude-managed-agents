@@ -31,6 +31,7 @@ import threading
 from pymongo.database import Database
 from memory.db import get_db, ensure_indexes
 from memory.conversation_summary import summarize_session
+from memory.context import build_memory_context
 
 def run_workflow(
     topic: str,
@@ -58,6 +59,11 @@ def run_workflow(
     print(f"Research topic: {topic}")
     print(f"{'='*60}\n")
 
+    ## --- TODO: hardcode the environment and agentId for testing -----
+    agent_id = "agent_01TcfMpQSNuF4UnfV5ciGh4P"
+    environment_id = "env_01RWH4KVTgEyAGZzPLKtAPwR"
+    print(f"--- Reuse: agent_id={agent_id}, environment_id={environment_id} ---")
+
     client = anthropic.Anthropic(api_key=SETTINGS["api_key"])
 
     # ── Setup (skip if IDs supplied) ───────────────────────────────────────
@@ -71,22 +77,32 @@ def run_workflow(
     if not environment_id:
         environment_id = create_environment(client)
 
-    # ── Step 1: Generate report with Managed Agent ─────────────────────────
-    # Now in this step, memory is used to keep track of tool usage and results.
-    # report, session_id = generate_research_report_with_tools(
-    #     client=client,
-    #     prompt=topic,
-    #     agent_id=agent_id,
-    #     environment_id=environment_id,
-    #     tool_mapping=TOOL_MAPPING,
-    #     db=db, 
-    #     student_id=student_id,
-    # )
 
-    # ── Memory ─────────────────────────
+    # ── Step 0: Assemble student memory context (the orchestration boundary),  ─────────────────────────
+    #  Either from the student profile or its pass conversation summary
+    context_preamble = build_memory_context(db=db, student_id=student_id, topic=topic)
+    print(f"\n--- Step 0: Memory context for student_id={student_id} ---")
+    print(f"   context_preamble:\n{context_preamble}\n")
+
+    # ── Step 1: Generate report with Managed Agent ─────────────────────────
+    # hand the memory context it to the report step — report.py itself just runs the agent.
+    
+    report, session_id = generate_research_report_with_tools(
+        client=client,
+        prompt=topic,
+        agent_id=agent_id,
+        environment_id=environment_id,
+        tool_mapping=TOOL_MAPPING,
+        db=db,
+        student_id=student_id,
+        context_preamble=context_preamble,
+    )
+
+    ## ── Memory ─────────────────────────
     # Open a thread to summarize the session in the background while we do reflection and HTML conversion.
-    print("\n--- Step 1.5: Summarizing sessions and write into a database collection i ---")
-    session_id = "sesn_01SnN4ghATHfySwbacX2Trt2"
+    print("\n--- Step 1.5: Summarizing sessions and write into a database collection in the background ---")
+    ## TEST ONLY    
+    # session_id = "sesn_01SnN4ghATHfySwbacX2Trt2"
 
     summary_thread = threading.Thread(
         target=summarize_session,
@@ -94,23 +110,23 @@ def run_workflow(
     )
     summary_thread.start()
 
-    # ── Step 2: Reflect and rewrite ────────────────────────────────────────
-    ## result = reflection_and_rewrite(client=client, report=report)
+    ## ── Step 2: Reflect and rewrite ────────────────────────────────────────
+    result = reflection_and_rewrite(client=client, report=report)
     print("Reflection:\n", result["reflection"])
 
-    # ── Step 3: Convert to HTML ────────────────────────────────────────────
-    # html = convert_report_to_html(client=client, report=result["revised_report"])
+    ## ── Step 3: Convert to HTML ────────────────────────────────────────────
+    html = convert_report_to_html(client=client, report=result["revised_report"])
 
-    # with open(output_html, "w", encoding="utf-8") as f:
-    #     f.write(html)
-    # print(f"\n✅ HTML report saved to: {output_html}")
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"\n✅ HTML report saved to: {output_html}")
 
-    # return {
-    #     "report":     report,
-    #     "reflection": result["reflection"],
-    #     "revised":    result["revised_report"],
-    #     "html":       html,
-    # }
+    return {
+        "report":     report,
+        "reflection": result["reflection"],
+        "revised":    result["revised_report"],
+        "html":       html,
+    }
 
 # ──────────────────────────────────────────
 # Main function
@@ -121,8 +137,9 @@ if __name__ == "__main__":
     db = get_db()
     ensure_indexes(db)
     ## TODO: need to get a student_id from the database later, for now just hardcode a test value
-    result = run_workflow( "Radio observations of recurrent novae", db=db, student_id="student_ab12")
+    # result = run_workflow( "Radio observations of recurrent novae", db=db, student_id="student123")
+    result = run_workflow( "what is agentic ai", db=db, student_id="student456")
     print("\n" + "="*60)
     print("Revised report preview (first 500 chars):")
     print("="*60)
-   #  print(result["revised"][:500])
+    print(result["revised"][:500])

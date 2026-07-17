@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import mongomock
 import pytest
 
-from memory.conversation_summary import find_relevant_past_summaries
+from memory.conversation_summary import find_relevant_past_summaries_by_studentid
 
 
 STUDENT_A = "student_ab12"
@@ -57,26 +57,26 @@ def _seed_session_one(db):
 
 def test_second_session_finds_the_first(db):
     _seed_session_one(db)
-    matches = find_relevant_past_summaries(db, student_id=STUDENT_A, topic_query="ethics of AI")
+    matches = find_relevant_past_summaries_by_studentid(db, student_id=STUDENT_A, topic_query="ethics of AI")
     assert len(matches) == 1
     assert matches[0]["session_id"] == "sess_001"
 
 
 def test_unrelated_topic_does_not_match(db):
     _seed_session_one(db)
-    matches = find_relevant_past_summaries(db, student_id=STUDENT_A, topic_query="quantum computing")
+    matches = find_relevant_past_summaries_by_studentid(db, student_id=STUDENT_A, topic_query="quantum computing")
     assert matches == []
 
 
 def test_other_students_sessions_never_leak(db):
     _seed_session_one(db)
-    matches = find_relevant_past_summaries(db, student_id=STUDENT_A, topic_query="ethics of AI")
+    matches = find_relevant_past_summaries_by_studentid(db, student_id=STUDENT_A, topic_query="ethics of AI")
     assert "sess_003" not in [m["session_id"] for m in matches]
 
 
 def test_orientation_message_built_from_match(db):
     _seed_session_one(db)
-    matches = find_relevant_past_summaries(db, student_id=STUDENT_A, topic_query="ethics of AI")
+    matches = find_relevant_past_summaries_by_studentid(db, student_id=STUDENT_A, topic_query="ethics of AI")
     prior = matches[0]
     orientation = (
         f"Note: this student researched a similar topic on {prior['date']}. "
@@ -101,8 +101,8 @@ def test_summary_collection_override_actually_used(db):
         "sources_used": [], "open_thread": None, "source_turns": [],
     })
 
-    default_matches = find_relevant_past_summaries(db, student_id=STUDENT_A, topic_query="ethics of AI")
-    dev_matches = find_relevant_past_summaries(
+    default_matches = find_relevant_past_summaries_by_studentid(db, student_id=STUDENT_A, topic_query="ethics of AI")
+    dev_matches = find_relevant_past_summaries_by_studentid(
         db, student_id=STUDENT_A, topic_query="ethics of AI", summary_collection="summaries_dev"
     )
 

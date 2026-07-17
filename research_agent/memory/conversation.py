@@ -5,6 +5,45 @@ Persistence for the `conversation` collection: one document per turn.
 Collection name comes from config.settings.SETTINGS by default —
 override via the collection_name param (mainly for tests) or the
 COLLECTION_CONVERSATION env var (for real deployments).
+
+Schema (`conversation` collection — one document per turn)
+----------------------------------------------------------
+Every doc carries the base fields from _base_doc(); turn_type-specific
+fields are layered on top.
+
+  Base (all turns):
+    _id            : ObjectId
+    session_id     : str                  # the Managed Agent session
+    student_id     : str
+    seq            : int                  # 1-based, per-session turn order
+    turn_type      : "user_message" | "assistant_message"
+                     | "tool_call" | "tool_result"
+    timestamp      : datetime (UTC)       # TTL: expires 90 days after write
+    summarized     : bool                 # False; set True once folded into
+                                          #   a conversation_summary doc
+    summary_id     : ObjectId | None      # -> conversation_summary._id
+
+  turn_type == "user_message" / "assistant_message":
+    role           : "user" | "assistant"
+    content        : str                  # the message text
+
+  turn_type == "tool_call":
+    role           : "tool"
+    tool_name      : str
+    content        : dict                 # the tool input
+    event_id       : str                  # Managed Agent event id
+    group_id       : str                  # added later by tag_batch()
+
+  turn_type == "tool_result":
+    role           : "tool"
+    tool_name      : str
+    content        : list | dict          # the tool result
+    event_id       : str
+    group_id       : str
+    status         : "success" | "error"
+
+Indexes (see memory/db.py): (session_id, seq), (student_id), event_id,
+and a TTL index on timestamp (90 days).
 """
 
 from datetime import datetime, timezone
