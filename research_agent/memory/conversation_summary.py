@@ -268,6 +268,8 @@ def find_relevant_past_summaries(
 
     # --- memory: embeddings (vector path) ---
     query_vector = embed_text(topic_query, input_type="query")
+    print(query_vector)
+    
     pipeline = [
         {
             "$vectorSearch": {
@@ -290,10 +292,21 @@ def find_relevant_past_summaries(
         },
     ]
     results = list(summary_coll.aggregate(pipeline))
+
+    # --- debug --- raw $vectorSearch hits BEFORE thresholding.
+    print(f"   [debug] $vectorSearch raw hits: {len(results)} (min_score={min_score})")
+    for d in results:
+        print(f"      raw score={d.get('score', 0.0):.4f} | "
+              f"topic={d.get('topic')!r} | session_id={d.get('session_id')}")
+
     # Threshold: $vectorSearch returns top-k regardless of quality, so cut
     # anything below min_score before it can be injected.
     if min_score > 0:
         results = [d for d in results if d.get("score", 0.0) >= min_score]
+
+    # --- debug --- what survived the threshold.
+    print(f"   [debug] after min_score>={min_score}: {len(results)} hit(s) kept")
+
     return results
 
 

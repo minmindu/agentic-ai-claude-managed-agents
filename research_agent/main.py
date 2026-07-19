@@ -31,7 +31,7 @@ import threading
 from pymongo.database import Database
 from memory.db import get_db, ensure_indexes
 from memory.conversation_summary import summarize_session
-from memory.context import build_memory_context
+from memory.memory_context import build_memory_context
 
 def run_workflow(
     topic: str,
@@ -84,8 +84,8 @@ def run_workflow(
     print(f"\n--- Step 0: Memory context for student_id={student_id} ---")
     print(f"   context_preamble:\n{context_preamble}\n")
 
-    # ── Step 1: Generate report with Managed Agent ─────────────────────────
-    # hand the memory context it to the report step — report.py itself just runs the agent.
+    ## ── Step 1: Generate report with Managed Agent ─────────────────────────
+    ## hand the memory context it to the report step — report.py itself just runs the agent.
     
     report, session_id = generate_research_report_with_tools(
         client=client,

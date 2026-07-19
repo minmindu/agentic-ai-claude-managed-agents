@@ -28,3 +28,7 @@ path/
 
 # output report
 *report.html
+
+## logs files
+logs/
+*.log
