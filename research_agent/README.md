@@ -182,6 +182,8 @@ profiles first (see [Seeding data](#seeding-data)), then run the pipeline:
 
 ```bash
 python main.py
+## or
+nohup python main.py > ../logs/log_$(date +"%Y%m%d_%H%M%S").log 2>&1 &
 ```
 
 `main.py` opens a MongoDB handle, ensures indexes, and runs the pipeline for a sample

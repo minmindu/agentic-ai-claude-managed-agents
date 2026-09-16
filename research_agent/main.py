@@ -16,11 +16,14 @@ Production tip — skip re-creation by passing existing IDs:
                environment_id="env_01...")
 """
 
+from datetime import datetime
+from pathlib import Path
+
 import anthropic
 
 
 from config.settings import SETTINGS
-from agents.research_agent import AGENT_CONFIG, TOOL_MAPPING, create_research_agent
+from agents.research_agent import TOOL_MAPPING, create_research_agent
 from agents.setup import create_environment
 from workflows.report import generate_research_report_with_tools
 from workflows.reflection import reflection_and_rewrite
@@ -32,6 +35,16 @@ from pymongo.database import Database
 from memory.db import get_db, ensure_indexes
 from memory.conversation_summary import summarize_session
 from memory.memory_context import build_memory_context
+
+# Reports land in ./output next to this file, regardless of the current directory.
+OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+
+
+def default_report_path(student_id: str | None) -> Path:
+    """Build a unique report path: ./output/research_report_<student_id>_<timestamp>.html"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return OUTPUT_DIR / f"research_report_{student_id or 'unknown'}_{timestamp}.html"
+
 
 def run_workflow(
     topic: str,
@@ -46,14 +59,15 @@ def run_workflow(
 
     Args:
         topic:          The research question or topic.
-        output_html:    Path to write the HTML report (defaults to settings).
+        output_html:    Path to write the HTML report. Defaults to
+                        ./output/research_report_<student_id>_<timestamp>.html
         agent_id:       Existing agent ID to reuse (skips creation if provided).
         environment_id: Existing environment ID to reuse (skips creation if provided).
 
     Returns:
         Dict with keys: report, reflection, revised, html.
     """
-    output_html = output_html or AGENT_CONFIG["default_output_html"]
+    output_path = Path(output_html) if output_html else default_report_path(student_id)
 
     print(f"\n{'='*60}")
     print(f"Research topic: {topic}")
@@ -117,9 +131,9 @@ def run_workflow(
     ## ── Step 3: Convert to HTML ────────────────────────────────────────────
     html = convert_report_to_html(client=client, report=result["revised_report"])
 
-    with open(output_html, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"\n✅ HTML report saved to: {output_html}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    print(f"\n✅ HTML report saved to: {output_path}")
 
     return {
         "report":     report,
@@ -137,8 +151,8 @@ if __name__ == "__main__":
     db = get_db()
     ensure_indexes(db)
     ## TODO: need to get a student_id from the database later, for now just hardcode a test value
-    # result = run_workflow( "Radio observations of recurrent novae", db=db, student_id="student123")
-    result = run_workflow( "what is agentic ai", db=db, student_id="student456")
+    result = run_workflow( "what is agentic ai", db=db, student_id="student123")
+    # result = run _workflow( "what is agentic ai", db=db, student_id="student456")
     print("\n" + "="*60)
     print("Revised report preview (first 500 chars):")
     print("="*60)
